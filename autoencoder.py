@@ -212,20 +212,23 @@ class Discriminator(nn.Module):
             x = F.dropout(x, self.dropout, training=self.training)
 
         x = global_add_pool(x, batch)
-        # print(f"Shape of x after pooling: {x.shape}")
-        # print(f"Shape of stats: {stats.shape}")
-        # print(f"Shape of flattened adj: {adj.view(adj.size(0), -1).shape}")
+
         # Concatenate the flattened adjacency matrix with x and stats
-        x = torch.cat((x, stats, adj.view(adj.size(0), -1)), dim=1)
-        # print(f"Shape of x after concatenation: {x.shape}")
-        x_l = x
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        x_cat = torch.cat((x, stats, adj.view(adj.size(0), -1)), dim=1)
+        x_temp = self.fc1(x_cat)
+
+        x_temp = F.relu(x_temp, inplace=False)
+        x_l = x_temp
+        x = self.fc2(x_temp)
         return torch.sigmoid(x), x_l # vérifier l'output
+
+
+
+    
 
 # Variational Autoencoder
 class VariationalAutoEncoder(nn.Module):
-    def __init__(self, input_dim, hidden_dim_enc, hidden_dim_dec, latent_dim, n_layers_enc, n_layers_dec, n_max_nodes,n_cond):
+    def __init__(self, input_dim, hidden_dim_enc, hidden_dim_dec, latent_dim, n_layers_enc, n_layers_dec, n_max_nodes,n_cond, n_layers_discri):
         super(VariationalAutoEncoder, self).__init__()
         self.n_max_nodes = n_max_nodes
         self.latent_dim = latent_dim
@@ -235,13 +238,16 @@ class VariationalAutoEncoder(nn.Module):
         self.fc_logvar = nn.Linear(hidden_dim_enc, latent_dim)
         self.decoder = Decoder(latent_dim, hidden_dim_dec, n_layers_dec, n_max_nodes) 
 
-        self.discriminator = Discriminator(input_dim, hidden_dim_enc, n_layers_enc, n_cond, n_max_nodes) #tester le nombre de courches
+        self.discriminator = Discriminator(input_dim, hidden_dim_enc, n_layers_discri, n_cond, n_max_nodes) #tester le nombre de courches
         
 
     def forward(self, data):
         x_g = self.encoder(data)
         mu = self.fc_mu(x_g)
+        # mu = F.linear(x_g, self.fc_mu.weight.clone(), self.fc_mu.bias.clone())
         logvar = self.fc_logvar(x_g)
+        # logvar = F.linear(x_g, self.fc_logvar.weight.clone(), self.fc_logvar.bias.clone())
+
         x_g = self.reparameterize(mu, logvar)
         adj = self.decoder(x_g)
         return adj, mu, logvar,x_g
@@ -270,23 +276,33 @@ class VariationalAutoEncoder(nn.Module):
        adj = self.decoder(mu)
        return adj
     
-    #A corriger, je pense que c'est faux
-    def reconstruction_loss(self, data, x, x_hat):
-        _, x_features = self.discriminator(data, x)
-        _, x_hat_features = self.discriminator(data, x_hat)
-        return F.mse_loss(x_hat_features,x_features, reduction='mean')
+
+
+    def reconstruction_loss(self, data, x, x_hat, z):
+        # #Discriminator output for real data
+        _, real_features = self.discriminator(data, x.view(-1, self.n_max_nodes * self.n_max_nodes))
+        
+        # #Discriminator output for reconstructed data
+        _, fake_features = self.discriminator(data, x_hat.view(-1, self.n_max_nodes * self.n_max_nodes))
+
+        # Reconstruction loss based on discriminator output probabilities
+        feature_recon_loss = F.mse_loss(real_features, fake_features, reduction='mean')
+
+        return feature_recon_loss
 
     def loss_function(self, data, beta=0.05,gamma = 0.05):
         x_g  = self.encoder(data)
+        # mu = F.linear(x_g, self.fc_mu.weight.clone(), self.fc_mu.bias.clone())
         mu = self.fc_mu(x_g)
         logvar = self.fc_logvar(x_g)
+        # logvar = F.linear(x_g, self.fc_logvar.weight.clone(), self.fc_logvar.bias.clone())
         x_g = self.reparameterize(mu, logvar)
         adj = self.decoder(x_g)
         
         #
         # recon = F.l1_loss(adj, data.A, reduction='mean')
         # C'est le  L discri llike 
-        recon = self.reconstruction_loss(data,data.A, adj)
+        recon = self.reconstruction_loss(data, data.A, adj, x_g)
 
         # KL divergence loss = PRIOR loss
         kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -295,7 +311,6 @@ class VariationalAutoEncoder(nn.Module):
         vae_loss = recon + beta*kld
 
         # GAN loss
-        # Sample Z_p from the prior N(0, I)
         batch_size = data.A.size(0)
         zp = torch.randn(batch_size, self.latent_dim).to(data.A.device)
         xp = self.decoder(zp)
@@ -304,9 +319,8 @@ class VariationalAutoEncoder(nn.Module):
         fake_output,_ = self.discriminator(data,adj.view(-1, self.n_max_nodes * self.n_max_nodes))
         xp_output,_ = self.discriminator(data,xp.view(-1,self.n_max_nodes * self.n_max_nodes))
         # Discriminator loss
-        d_loss = -torch.mean(torch.log(real_output + 1e-8) + torch.log(1 - fake_output + 1e-8) + torch.log(1 - xp_output + 1e-8))
+        d_loss = torch.mean(torch.log(real_output + 1e-8) + torch.log(1 - fake_output + 1e-8) + torch.log(1 - xp_output + 1e-8))
 
-         # Generator loss (VAE's decoder is also GAN's generator)
         g_loss = -torch.mean(torch.log(fake_output + 1e-8))
 
 

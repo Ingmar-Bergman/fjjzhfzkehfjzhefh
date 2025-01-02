@@ -101,9 +101,12 @@ parser.add_argument('--dim-condition', type=int, default=128, help="Dimensionali
 # Number of conditions used in conditional vector (number of properties)
 parser.add_argument('--n-condition', type=int, default=7, help="Number of distinct condition properties used in conditional vector (default: 7)")
 
-parser.add_argument('--gamma', type=float, default=1.0, help="Gamma value for the loss function (default: 1.0)")
+parser.add_argument('--n-layers_discri', type=int, default=2, help="Number of layers in the discriminator model (default: 3)")
 
-parser.add_argument('--beta', type=float, default=0.05, help="Beta value for the loss function (default: 0.05)")
+parser.add_argument('--gamma', type=float, default=0.5, help="Gamma value for the loss function (default: 1.0)")
+
+parser.add_argument('--beta', type=float, default=1, help="Beta value for the loss function (default: 0.05)")
+# a mettre dans le code
 
 
 args = parser.parse_args()
@@ -127,7 +130,7 @@ test_loader = DataLoader(testset, batch_size=args.batch_size, shuffle=False)
 
 
 # initialize VGAE model
-autoencoder = VariationalAutoEncoder(args.spectral_emb_dim+1, args.hidden_dim_encoder, args.hidden_dim_decoder, args.latent_dim, args.n_layers_encoder, args.n_layers_decoder, args.n_max_nodes, args.n_condition).to(device)
+autoencoder = VariationalAutoEncoder(args.spectral_emb_dim+1, args.hidden_dim_encoder, args.hidden_dim_decoder, args.latent_dim, args.n_layers_encoder, args.n_layers_decoder, args.n_max_nodes, args.n_condition, args.n_layers_discri).to(device)
 
 
 # optimizer = SAM(autoencoder.parameters(), torch.optim.Adam, rho=0.005, adaptive=False, lr=1e-3)
@@ -136,8 +139,9 @@ optimizer_dec = torch.optim.Adam(autoencoder.decoder.parameters(), lr=args.lr)
 optimizer_disc = torch.optim.Adam(autoencoder.discriminator.parameters(), lr=args.lr)
 
 scheduler_vae = torch.optim.lr_scheduler.StepLR(optimizer_vae, step_size=500, gamma=0.1)
-scheduler_dec = torch.optim.lr_scheduler.StepLR(optimizer_dec, step_size=500, gamma=0.1)
-scheduler_disc = torch.optim.lr_scheduler.StepLR(optimizer_disc, step_size=500, gamma=0.1)
+scheduler_dec = torch.optim.lr_scheduler.StepLR(optimizer_dec, step_size=40, gamma=0.7)
+scheduler_disc = torch.optim.lr_scheduler.StepLR(optimizer_disc, step_size=40, gamma=0.8)
+
 
 # Train VGAE model
 if args.train_autoencoder:
@@ -160,20 +164,24 @@ if args.train_autoencoder:
             data = data.to(device)
 
             # verifier retaining graph
+
+
             vae_loss, dec_loss, d_loss, recon_loss, kld_loss, g_loss = autoencoder.loss_function(data, args.gamma, args.beta)
+
             optimizer_disc.zero_grad()
             d_loss.backward(retain_graph=True) 
 
             optimizer_vae.zero_grad()
             vae_loss.backward(retain_graph=True)
-            #do gradient clipping
-            optimizer_dec.zero_grad()
-            dec_loss.backward()  
 
-            # Update parameters
+            optimizer_dec.zero_grad()
+            dec_loss.backward()
+
             optimizer_disc.step()
             optimizer_vae.step()
             optimizer_dec.step()
+
+            # Update parameters
 
             train_loss_all_recon += recon_loss.item()
             train_loss_all_kld += kld_loss.item()
@@ -197,15 +205,15 @@ if args.train_autoencoder:
             vae_loss, dec_loss, d_loss, recon_loss, kld_loss, g_loss  = autoencoder.loss_function(data, args.gamma, args.beta)
             val_loss_all_recon += recon_loss.item()
             val_loss_all_kld += kld_loss.item()
-            val_loss_all += recon_loss.item() # Using reconstruction loss for validation
+            val_loss_all += recon_loss.item() + kld_loss.item()  # Using reconstruction loss for validation
             cnt_val += 1
             val_count += torch.max(data.batch) + 1
 
         if epoch % 1 == 0:
             dt_t = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            print('{} Epoch: {:04d}, VAE Loss: {:.5f}, Combined Loss: {:.5f}, D Loss: {:.5f}, Train Recon Loss: {:.2f}, Train KLD Loss: {:.2f}, G Loss: {:.2f}, Val Recon Loss: {:.5f}'.format(
+            print('{} Epoch: {:04d}, VAE Loss: {:.5f}, Combined Loss: {:.5f}, D Loss: {:.5f}, Train Recon Loss: {:.2f}, Train KLD Loss: {:.2f}, Val Recon Loss: {:.5f}'.format(
                 dt_t, epoch, train_loss_all_vae / cnt_train, train_loss_all_g / cnt_train, train_loss_all_d/cnt_train, train_loss_all_recon / cnt_train,
-                train_loss_all_kld / cnt_train, train_loss_all_g/cnt_train, val_loss_all / cnt_val))
+                train_loss_all_kld / cnt_train, val_loss_all / cnt_val))
 
         scheduler_vae.step()
         scheduler_dec.step()
@@ -250,11 +258,12 @@ posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
 
 # initialize denoising model
 denoise_model = DenoiseNN(input_dim=args.latent_dim, hidden_dim=args.hidden_dim_denoise, n_layers=args.n_layers_denoise, n_cond=args.n_condition, d_cond=args.dim_condition).to(device)
-# optimizer = torch.optim.Adam(denoise_model.parameters(), lr=0.001)
-optimizer = SAM(denoise_model.parameters(), torch.optim.Adam, rho=0.05, adaptive=True, lr=1e-3)
+optimizer = torch.optim.Adam(denoise_model.parameters(), lr=0.001)
+# optimizer = SAM(denoise_model.parameters(), torch.optim.Adam, rho=0.05, adaptive=True, lr=1e-3)
 
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.7)
 # Train denoising model
+
 if args.train_denoiser:
     best_val_loss = np.inf
     for epoch in range(1, args.epochs_denoise+1):
@@ -264,20 +273,24 @@ if args.train_denoiser:
         for data in train_loader:
             data = data.to(device)
             optimizer.zero_grad()
-            x_g = autoencoder.encode(data)
-            t = torch.randint(0, args.timesteps, (x_g.size(0),), device=device).long()
-            loss = p_losses(denoise_model, x_g, t, data.stats, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, loss_type="huber")
+            # x_g = autoencoder.encode(data)
+            # t = torch.randint(0, args.timesteps, (x_g.size(0),), device=device).long()
+            # loss = p_losses(denoise_model, x_g, t, data.stats, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, loss_type="huber")
             
-            loss.backward()
-            optimizer.first_step(zero_grad=True)
+            # loss.backward()
+            # optimizer.first_step(zero_grad=True)
 
 
+            # x_g = autoencoder.encode(data)
+            # t = torch.randint(0, args.timesteps, (x_g.size(0),), device=device).long()
+            # loss = p_losses(denoise_model, x_g, t, data.stats, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, loss_type="huber")
+            # loss.backward()
+            # optimizer.second_step(zero_grad=True)
             x_g = autoencoder.encode(data)
             t = torch.randint(0, args.timesteps, (x_g.size(0),), device=device).long()
             loss = p_losses(denoise_model, x_g, t, data.stats, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, loss_type="huber")
             loss.backward()
-            optimizer.second_step(zero_grad=True)
-
+            optimizer.step()
             train_loss_all += x_g.size(0) * loss.item()
             train_count += x_g.size(0)
             # optimizer.step()
