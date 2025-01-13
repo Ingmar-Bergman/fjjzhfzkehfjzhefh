@@ -2,7 +2,6 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATv2Conv
 
 def extract(a, t, x_shape):
     batch_size = t.shape[0]
@@ -60,138 +59,114 @@ class SinusoidalPositionEmbeddings(nn.Module):
 
 
 # Denoise model
-# class DenoiseNN(nn.Module):
-#     def __init__(self, input_dim, hidden_dim, n_layers, n_cond, d_cond):
-#         super(DenoiseNN, self).__init__()
-#         self.n_layers = n_layers
-#         self.n_cond = n_cond
-#         self.cond_mlp = nn.Sequential(
-#             nn.Linear(n_cond, d_cond),
-#             nn.ReLU(),
-#             nn.Linear(d_cond, d_cond),
-#         )
-
-#         self.time_mlp = nn.Sequential(
-#             SinusoidalPositionEmbeddings(hidden_dim),
-#             nn.Linear(hidden_dim, hidden_dim),
-#             nn.GELU(),
-#             nn.Linear(hidden_dim, hidden_dim),
-#         )
-
-#         mlp_layers = [nn.Linear(input_dim+d_cond, hidden_dim)] + [nn.Linear(hidden_dim+d_cond, hidden_dim) for i in range(n_layers-2)]
-#         mlp_layers.append(nn.Linear(hidden_dim, input_dim))
-#         self.mlp = nn.ModuleList(mlp_layers)
-
-#         bn_layers = [nn.BatchNorm1d(hidden_dim) for i in range(n_layers-1)]
-#         self.bn = nn.ModuleList(bn_layers)
-
-#         self.relu = nn.ReLU()
-#         self.tanh = nn.Tanh()
-
-#     def forward(self, x, t, cond):
-#         cond = torch.reshape(cond, (-1, self.n_cond))
-#         cond = torch.nan_to_num(cond, nan=-100.0)
-#         cond = self.cond_mlp(cond)
-#         t = self.time_mlp(t)
-#         for i in range(self.n_layers-1):
-#             x = torch.cat((x, cond), dim=1)
-#             x = self.relu(self.mlp[i](x))+t
-#             x = self.bn[i](x)
-#         x = self.mlp[self.n_layers-1](x)
-#         return x
-
 class DenoiseNN(nn.Module):
-    def __init__(self, input_dim, hidden_dim, n_layers, n_cond, d_cond):
+    def __init__(self, input_dim, hidden_dim, n_layers, n_cond, d_cond, use_attention=False):
         super(DenoiseNN, self).__init__()
         self.n_layers = n_layers
-        self.n_cond = n_cond
+        self.use_attention = use_attention
+        self.dropout = nn.Dropout(0.3)
+
+        # Conditioning MLP
         self.cond_mlp = nn.Sequential(
             nn.Linear(n_cond, d_cond),
-            nn.ReLU(),
+            nn.PReLU(),
             nn.Linear(d_cond, d_cond),
+            nn.PReLU(),
+
         )
 
+        # Time Embedding
+        self.time_embedding = SinusoidalPositionEmbeddings(hidden_dim)
         self.time_mlp = nn.Sequential(
-            SinusoidalPositionEmbeddings(hidden_dim),
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
         )
 
-        mlp_layers = [nn.Linear(input_dim+d_cond, hidden_dim)] + [nn.Linear(hidden_dim+d_cond, hidden_dim) for i in range(n_layers-2)]
-        mlp_layers.append(nn.Linear(hidden_dim, input_dim))
-        self.mlp = nn.ModuleList(mlp_layers)
+        # Define MLP layers with residual connections
+        self.mlp = nn.ModuleList()
+        for i in range(n_layers):
+            if i == 0:
+                self.mlp.append(nn.Linear(input_dim + d_cond, hidden_dim))
+            else:
+                self.mlp.append(nn.Linear(hidden_dim + d_cond, hidden_dim))
 
-        bn_layers = [nn.BatchNorm1d(hidden_dim) for i in range(n_layers-1)]
-        self.bn = nn.ModuleList(bn_layers)
+        # Batch Normalization layers
+        self.bn = nn.ModuleList([nn.BatchNorm1d(hidden_dim) for _ in range(n_layers)])
+        num_groups = 8  # or 4, etc., must divide hidden_dim
+        self.gn = nn.ModuleList([nn.GroupNorm(num_groups=num_groups, num_channels=hidden_dim)
+                         for _ in range(n_layers)])
 
-        self.relu = nn.ReLU()
-        self.tanh = nn.Tanh()
+        # Optional Attention Layer
+        if self.use_attention:
+            self.attention = nn.MultiheadAttention(hidden_dim, num_heads=1, batch_first=True)
+
+        # Activation Function
+        self.activation = nn.PReLU()
+
+        # Final Output Layer
+        self.output_layer = nn.Linear(hidden_dim, input_dim)
 
     def forward(self, x, t, cond):
-        cond = torch.reshape(cond, (-1, self.n_cond))
-        cond = torch.nan_to_num(cond, nan=-100.0)
-        cond = self.cond_mlp(cond)
-        t = self.time_mlp(t)
-        for i in range(self.n_layers-1):
-            x = torch.cat((x, cond), dim=1)
-            x = self.relu(self.mlp[i](x))+t
-            x = self.bn[i](x)
-        x = self.mlp[self.n_layers-1](x)
-        return x
+        """
+        Forward pass of the denoising model.
 
-# class DenoiseNN(nn.Module):
-#     def __init__(self, input_dim, hidden_dim, n_layers, n_cond, d_cond):
-#         super(DenoiseNN, self).__init__()
-#         self.n_layers = n_layers
-#         self.n_cond = n_cond
-#         self.cond_mlp = nn.Sequential(
-#             nn.Linear(n_cond, d_cond),
-#             nn.ReLU(),
-#             nn.Linear(d_cond, d_cond),
-#         )
+        Args:
+            x (Tensor): Noisy input data, shape (batch_size, input_dim).
+            t (Tensor): Timesteps, shape (batch_size,).
+            cond (Tensor): Conditioning information, shape (batch_size, n_cond).
 
-#         self.time_mlp = nn.Sequential(
-#             SinusoidalPositionEmbeddings(hidden_dim),
-#             nn.Linear(hidden_dim, hidden_dim),
-#             nn.GELU(),
-#             nn.Linear(hidden_dim, hidden_dim),
-#         )
-#         self.edge_index = self.get_fully_connected_edge_index(input_dim)
-#         # Modify GAT layers
-#         self.conv1 = GATv2Conv(input_dim + d_cond, hidden_dim, edge_dim=None)  # Assuming no edge features initially
-#         self.convs = nn.ModuleList(
-#             [GATv2Conv(hidden_dim + d_cond, hidden_dim, edge_dim=None) for _ in range(n_layers - 2)]
-#         )
-#         self.fc_out = nn.Linear(hidden_dim, input_dim)
-#         self.relu = nn.ReLU()
-#         self.tanh = nn.Tanh()  # Consider if you need this activation at the end
+        Returns:
+            Tensor: Predicted noise, shape (batch_size, input_dim).
+        """
+        # Handle conditioning information
+        cond = torch.nan_to_num(cond, nan=0.0)  # Replace NaNs with 0.0 or another strategy
+        cond = self.cond_mlp(cond)  # Shape: (batch_size, d_cond)
 
-#     def get_fully_connected_edge_index(self, num_nodes):
-#         # Create a tensor for a fully connected graph
-#         edge_index = torch.combinations(torch.arange(num_nodes), r=2).t()
-#         edge_index_reversed = edge_index[[1, 0]]
-#         edge_index = torch.cat([edge_index, edge_index_reversed], dim=1)
-#         return edge_index
+        # Generate time embeddings
+        time_emb = self.time_embedding(t)  # Shape: (batch_size, hidden_dim)
+        time_emb = self.time_mlp(time_emb)  # Shape: (batch_size, hidden_dim)
 
-#     def forward(self, x, t, cond):
-#         cond = torch.reshape(cond, (-1, self.n_cond))
-#         cond = torch.nan_to_num(cond, nan=-100.0)
-#         cond = self.cond_mlp(cond)
-#         t = self.time_mlp(t)
+        out = x  # Initial input
 
-#         self.edge_index = self.edge_index.to(x.device)
+        for i in range(self.n_layers):
+            if i == 0:
+                # First layer: concatenate input with conditioning
+                out = torch.cat((out, cond), dim=1)
+            else:
+                # Subsequent layers: concatenate hidden state with conditioning
+                out = torch.cat((out, cond), dim=1)
 
-#         x = torch.cat((x, cond), dim=1)
-#         x = self.relu(self.conv1(x, self.edge_index)) + t
+            # Apply MLP layer
+            out = self.mlp[i](out)
 
-#         for conv in self.convs:
-#             x = torch.cat((x, cond), dim=1)
-#             x = self.relu(conv(x, self.edge_index)) + t
+            # Add time embedding
+            out = out + time_emb
 
-#         x = self.fc_out(x)
-#         return x
-    
+            # Apply activation
+            out = self.activation(out)
+
+            # Apply Batch Normalization
+            # out = self.bn[i](out)
+            # Insert a dummy dimension at the end: (N, hidden_dim) -> (N, hidden_dim, 1)
+            out = out.unsqueeze(-1)
+            out = self.gn[i](out)           # Now groupnorm sees (N, C=hidden_dim, L=1)
+            out = out.squeeze(-1)
+
+            # Optional Attention
+            if self.use_attention:
+                # Reshape for attention: (batch_size, seq_length=1, hidden_dim)
+                out_reshaped = out.unsqueeze(1)  # Adding seq_length dimension
+                attn_output, _ = self.attention(out_reshaped, out_reshaped, out_reshaped)
+                out = attn_output.squeeze(1)  # Remove seq_length dimension
+
+        # Final output layer
+        out = self.output_layer(out)
+
+        return out
+
+
 @torch.no_grad()
 def p_sample(model, x, t, cond, t_index, betas):
     # define alphas
