@@ -42,6 +42,9 @@ for i in tqdm(range(num_graphs), desc="Generating graphs"):
     elif family == "erdos_renyi":
         p = random.uniform(0.1, 0.3)
         G = nx.erdos_renyi_graph(num_nodes, p)
+    elif family == "lollipop":
+        m = num_nodes // 2
+        G = nx.lollipop_graph(m, num_nodes - m)
     elif family == "newman_watts_strogatz":
         k = random.randint(2, num_nodes - 1)
         p = random.uniform(0.1, 0.3)

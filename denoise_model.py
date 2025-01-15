@@ -64,7 +64,7 @@ class DenoiseNN(nn.Module):
         super(DenoiseNN, self).__init__()
         self.n_layers = n_layers
         self.use_attention = use_attention
-        self.dropout = nn.Dropout(0.3)
+        self.dropout = nn.Dropout(0.05)
 
         # Conditioning MLP
         self.cond_mlp = nn.Sequential(
