@@ -10,6 +10,7 @@ import community as community_louvain
 
 from torch import Tensor
 from torch.utils.data import Dataset
+import torch.nn as nn
 
 from grakel.utils import graph_from_networkx
 from grakel.kernels import WeisfeilerLehman, VertexHistogram
@@ -18,7 +19,6 @@ import scipy.sparse as sparse
 from torch_geometric.data import Data
 
 from extract_feats import extract_feats, extract_numbers
-
 
 
 def preprocess_dataset(dataset, n_max_nodes, spectral_emb_dim):
@@ -45,7 +45,7 @@ def preprocess_dataset(dataset, n_max_nodes, spectral_emb_dim):
                 data_lst.append(Data(stats=feats_stats, filename = graph_id))
             fr.close()                    
             torch.save(data_lst, filename)
-            # print(f'Dataset {filename} saved')
+            print(f'Dataset {filename} saved')
 
 
     else:
@@ -102,12 +102,13 @@ def preprocess_dataset(dataset, n_max_nodes, spectral_emb_dim):
 
                 adj_bfs = nx.to_numpy_array(G, nodelist=node_list_bfs)
 
+
                 adj = torch.from_numpy(adj_bfs).float()
                 diags = np.sum(adj_bfs, axis=0)
                 diags = np.squeeze(np.asarray(diags))
                 D = sparse.diags(diags).toarray()
                 L = D - adj_bfs
-                with sp.errstate(divide="ignore"):
+                with np.errstate(divide="ignore"):
                     diags_sqrt = 1.0 / np.sqrt(diags)
                 diags_sqrt[np.isinf(diags_sqrt)] = 0
                 DH = sparse.diags(diags).toarray()
@@ -122,11 +123,13 @@ def preprocess_dataset(dataset, n_max_nodes, spectral_emb_dim):
                 edge_index = torch.nonzero(adj).t()
 
                 size_diff = n_max_nodes - G.number_of_nodes()
+                # x = torch.zeros(G.number_of_nodes(), spectral_emb_dim + 1)
                 x = torch.zeros(G.number_of_nodes(), spectral_emb_dim+1)
                 x[:,0] = torch.mm(adj, torch.ones(G.number_of_nodes(), 1))[:,0]/(n_max_nodes-1)
                 mn = min(G.number_of_nodes(),spectral_emb_dim)
                 mn+=1
                 x[:,1:mn] = eigvecs[:,:spectral_emb_dim]
+                # x[:,1:mn] = torch.rand(G.number_of_nodes(), mn-1)
                 adj = F.pad(adj, [0, size_diff, 0, size_diff])
                 adj = adj.unsqueeze(0)
 
@@ -221,3 +224,9 @@ def sigmoid_beta_schedule(timesteps):
     beta_end = 0.02
     betas = torch.linspace(-6, 6, timesteps)
     return torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
+
+
+
+
+
+

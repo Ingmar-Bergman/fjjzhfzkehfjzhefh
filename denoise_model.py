@@ -95,7 +95,7 @@ class DenoiseNN(nn.Module):
         # Batch Normalization layers
         self.bn = nn.ModuleList([nn.BatchNorm1d(hidden_dim) for _ in range(n_layers)])
         num_groups = 8  # or 4, etc., must divide hidden_dim
-        self.gn = nn.ModuleList([nn.GroupNorm(num_groups=num_groups, num_channels=hidden_dim)
+        self.gn = nn.ModuleList([nn.GroupNorm(num_groups=num_groups, num_channels=hidden_dim) 
                          for _ in range(n_layers)])
 
         # Optional Attention Layer
@@ -150,9 +150,9 @@ class DenoiseNN(nn.Module):
             # Apply Batch Normalization
             # out = self.bn[i](out)
             # Insert a dummy dimension at the end: (N, hidden_dim) -> (N, hidden_dim, 1)
-            out = out.unsqueeze(-1)
+            out = out.unsqueeze(-1)         
             out = self.gn[i](out)           # Now groupnorm sees (N, C=hidden_dim, L=1)
-            out = out.squeeze(-1)
+            out = out.squeeze(-1)    
 
             # Optional Attention
             if self.use_attention:

@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 # Parameters
 output_folder = "synthetic_graphs_random"  # Folder to save the dataset
-num_graphs = 8000  # Total number of graphs to generate
+num_graphs = 6000  # Total number of graphs to generate
 max_nodes = 50  # Maximum number of nodes per graph
 min_nodes = 10   # Minimum number of nodes per graph
 families = [
@@ -108,12 +108,12 @@ for i in tqdm(range(num_graphs), desc="Generating graphs"):
     )
 
     # Save the prompt to a text file
-    description_filename = os.path.join(description_folder, f"graph_{8000+i}.txt")
+    description_filename = os.path.join(description_folder, f"graph_{1000+i}.txt")
     with open(description_filename, "w") as txtfile:
         txtfile.write(prompt)
 
     # Save the edge list to an .edgelist file
-    edgelist_filename = os.path.join(edgelist_folder, f"graph_{8000+i}.edgelist")
-    nx.write_edgelist(G, edgelist_filename, data=False)
+    edgelist_filename = os.path.join(edgelist_folder, f"graph_{1000+i}.edgelist")
+    nx.write_edgelist(G, edgelist_filename, data=True)
 
 print(f"Generated {num_graphs} graphs. Files are saved in '{output_folder}'.")
