@@ -9,6 +9,7 @@ num_graphs = 6000  # Total number of graphs to generate
 max_nodes = 50  # Maximum number of nodes per graph
 min_nodes = 10   # Minimum number of nodes per graph
 families = [
+    "path", "cycle", "wheel", "star", "ladder", "lollipop",
     "erdos_renyi", "newman_watts_strogatz", "watts_strogatz",
     "random_regular", "barabasi_albert", "dual_barabasi_albert",
     "extended_barabasi_albert", "holme_kim", "random_lobster",
@@ -28,7 +29,17 @@ for i in tqdm(range(num_graphs), desc="Generating graphs"):
     num_nodes = random.randint(min_nodes, max_nodes)
 
     # Generate graph based on the selected family
-    if family == "erdos_renyi":
+    if family == "path":
+        G = nx.path_graph(num_nodes)
+    elif family == "cycle":
+        G = nx.cycle_graph(num_nodes)
+    elif family == "wheel":
+        G = nx.wheel_graph(num_nodes)
+    elif family == "star":
+        G = nx.star_graph(num_nodes - 1)
+    elif family == "ladder":
+        G = nx.ladder_graph(num_nodes // 2)
+    elif family == "erdos_renyi":
         p = random.uniform(0.1, 0.3)
         G = nx.erdos_renyi_graph(num_nodes, p)
     elif family == "newman_watts_strogatz":
